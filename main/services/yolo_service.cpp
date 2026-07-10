@@ -2,9 +2,11 @@
 #include "core/event_bus.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_cache.h"
 #include "camera.h"
 
 #include "dl_image_process.hpp"
+#include "dl_image_ppa.hpp"
 
 /* Global instance pointer for C wrapper functions */
 static YoloService *g_yolo_instance = nullptr;
@@ -24,6 +26,9 @@ YoloService::YoloService(EventBus &bus)
     , m_model(nullptr)
     , m_preprocessor(nullptr)
     , m_postprocessor(nullptr)
+    , m_ppa_handle(nullptr)
+    , m_ppa_outbuf(nullptr)
+    , m_ppa_dst_img{}
     , m_score_thr(0.25f)
     , m_nms_thr(0.65f)
     , m_top_k(100)
@@ -78,6 +83,31 @@ esp_err_t YoloService::init()
         return ESP_FAIL;
     }
 
+    // Register PPA SRM client + allocate output buffer (DMA-capable, no custom alignment)
+    {
+        ppa_client_config_t ppa_cfg = {PPA_OPERATION_SRM, 0, PPA_DATA_BURST_LENGTH_128};
+        esp_err_t ppa_err = ppa_register_client(&ppa_cfg, &m_ppa_handle);
+        if (ppa_err != ESP_OK) {
+            ESP_LOGW(TAG, "PPA registration failed (%d), will use SW resize", ppa_err);
+            m_ppa_handle = nullptr;
+            m_ppa_outbuf = nullptr;
+        } else {
+            ESP_LOGI(TAG, "PPA SRM client registered");
+            // Allocate DMA-capable PSRAM using plain calloc (avoid aligned_calloc which may corrupt heap)
+            size_t outbuf_size = 640 * 640 * 3;
+            m_ppa_outbuf = heap_caps_calloc(1, outbuf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
+            if (m_ppa_outbuf) {
+                m_ppa_dst_img.data = m_ppa_outbuf;
+                m_ppa_dst_img.width = 640;
+                m_ppa_dst_img.height = 640;
+                m_ppa_dst_img.pix_type = dl::image::DL_IMAGE_PIX_TYPE_BGR888;
+                ESP_LOGI(TAG, "PPA buffer allocated (%.1fMB DMA PSRAM)", outbuf_size / 1048576.0);
+            } else {
+                ESP_LOGE(TAG, "PPA buffer allocation failed!");
+            }
+        }
+    }
+
     // Register global instance for C wrapper calls
     g_yolo_instance = this;
 
@@ -92,7 +122,7 @@ esp_err_t YoloService::load_model()
         return ESP_OK;
     }
 
-    const char *model_path = "/sdcard/models/coco_pose_yolo11n_pose_s8_v2.espdl";
+    const char *model_path = "/sdcard/models/coco_pose_yolo11n_pose_s8_p4_v2.espdl";
 
     // Check if SD is mounted and file exists
     FILE *f = fopen(model_path, "rb");
@@ -108,11 +138,12 @@ esp_err_t YoloService::load_model()
     m_model = new dl::Model(
         model_path,
         fbs::MODEL_LOCATION_IN_SDCARD,
-        0,                          // max_internal_size = 0
+        0,                          // max_internal_size = 0 (internal SRAM too fragmented, use PSRAM)
         dl::MEMORY_MANAGER_GREEDY,
         nullptr,                    // key (no encryption)
-        true                        // param_copy to PSRAM
+        true                        // param_copy
     );
+    // Note: minimize() will be called below after model is fully loaded.
 
     ESP_LOGI(TAG, "Model loaded successfully");
 
@@ -131,11 +162,13 @@ esp_err_t YoloService::load_model()
     }
 
     // Create image preprocessor
+    // rgb_swap=true because PPA will output BGR888 (the only RGB888-compatible
+    // format it supports from RGB565LE input), and model expects RGB888.
     m_preprocessor = new dl::image::ImagePreprocessor(
         m_model,
         {0.0f, 0.0f, 0.0f},     // mean [0,255]
         {255.0f, 255.0f, 255.0f}, // std
-        false                      // rgb_swap = false (model expects RGB)
+        true                       // rgb_swap = true (PPA outputs BGR888, model needs RGB888)
     );
     m_preprocessor->enable_letterbox({0, 0, 0});
 
@@ -148,6 +181,9 @@ esp_err_t YoloService::load_model()
         m_top_k,
         YOLO11_POSE_STAGES
     );
+
+    // Minimize model: free flatbuffer parsing metadata (after pre/post processor creation)
+    m_model->minimize();
 
     ESP_LOGI(TAG, "YOLO11n-pose model loaded and ready");
     return ESP_OK;
@@ -172,6 +208,16 @@ void YoloService::deinit()
         vSemaphoreDelete(m_result_mutex);
         m_result_mutex = nullptr;
     }
+    // Free PPA resources
+    if (m_ppa_handle) {
+        ppa_unregister_client(m_ppa_handle);
+        m_ppa_handle = nullptr;
+    }
+    if (m_ppa_outbuf) {
+        heap_caps_free(m_ppa_outbuf);
+        m_ppa_outbuf = nullptr;
+    }
+
     delete m_postprocessor;
     m_postprocessor = nullptr;
     delete m_preprocessor;
@@ -182,36 +228,99 @@ void YoloService::deinit()
     ESP_LOGI(TAG, "YOLO service deinitialized");
 }
 
-esp_err_t YoloService::detect(uint8_t *rgb888_data, int width, int height)
+esp_err_t YoloService::detect(const camera_frame_t *frame)
 {
     if (!m_model || !m_preprocessor || !m_postprocessor) {
         ESP_LOGW(TAG, "Model not initialized");
         return ESP_ERR_INVALID_STATE;
     }
+    if (!frame || !frame->fb) {
+        return ESP_ERR_INVALID_ARG;
+    }
 
-    // Prepare input image descriptor
-    dl::image::img_t img;
-    img.data = rgb888_data;
-    img.width = width;
-    img.height = height;
-    img.pix_type = dl::image::DL_IMAGE_PIX_TYPE_RGB888;
-    // img.shape = {1, height, width, 3}; // NHWC format hint
+    // ── Step 1: PPA hardware resize 800x800 RGB565 → 640x640 RGB888 ──
+    bool ppa_used = false;
+    if (m_ppa_handle && m_ppa_outbuf) {
+        dl::image::img_t src_img;
+        src_img.data = frame->fb;
+        src_img.width = frame->width;
+        src_img.height = frame->height;
+        src_img.pix_type = dl::image::DL_IMAGE_PIX_TYPE_RGB565LE;
 
-    // Preprocess: resize + letterbox + normalize
-    m_preprocessor->preprocess(img);
+        esp_err_t ret = dl::image::resize_ppa(src_img, m_ppa_dst_img, m_ppa_handle);
+        if (ret == ESP_OK) {
+            ppa_used = true;
+            // Cache sync: ensure PPA-written data is visible to CPU
+            esp_cache_msync(m_ppa_outbuf, 640 * 640 * 3, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+        } else {
+            ESP_LOGW(TAG, "PPA resize failed (%d), falling back to SW resize", ret);
+        }
+    }
 
-    // Run model inference
+    // ── Step 2: Preprocess (normalize only if PPA did resize, else full SW) ──
+    if (ppa_used) {
+        // Image already at 640x640 RGB888 — preprocessor resize is 1:1 (fast)
+        m_preprocessor->preprocess(m_ppa_dst_img);
+    } else {
+        // Fallback: convert frame to RGB888 in software, then full preprocess
+        dl::image::img_t sw_img;
+        // Allocate temp RGB888 buffer for fallback
+        size_t sw_size = frame->width * frame->height * 3;
+        uint8_t *sw_buf = (uint8_t *)heap_caps_malloc(sw_size, MALLOC_CAP_SPIRAM);
+        if (!sw_buf) {
+            ESP_LOGE(TAG, "Fallback: failed to alloc SW buffer");
+            return ESP_ERR_NO_MEM;
+        }
+        // Simple RGB565 → BGR888 conversion (preprocessor has rgb_swap=true)
+        uint16_t *src = (uint16_t *)frame->fb;
+        uint8_t *dst = sw_buf;
+        for (int i = 0; i < frame->width * frame->height; i++) {
+            uint16_t p = src[i];
+            uint8_t r = (p >> 8) & 0xF8;
+            uint8_t g = (p >> 3) & 0xFC;
+            uint8_t b = (p << 3) & 0xF8;
+            *dst++ = b;  // B
+            *dst++ = g;  // G
+            *dst++ = r;  // R
+        }
+        sw_img.data = sw_buf;
+        sw_img.width = frame->width;
+        sw_img.height = frame->height;
+        sw_img.pix_type = dl::image::DL_IMAGE_PIX_TYPE_BGR888;
+        m_preprocessor->preprocess(sw_img);
+        heap_caps_free(sw_buf);
+    }
+
+    // ── Step 3: Model inference ──
     m_model->run(m_preprocessor->get_model_input());
 
-    // Post-process to get detection results (boxes + keypoints)
+    // ── Step 4: Post-process ──
     m_postprocessor->postprocess();
 
-    // Get results (in original image coordinates)
-    if (m_result_mutex) xSemaphoreTake(m_result_mutex, portMAX_DELAY);
-    m_results = m_postprocessor->get_result(width, height);
-    if (m_result_mutex) xSemaphoreGive(m_result_mutex);
+    // Get results and map to original camera frame dimensions
+    if (ppa_used) {
+        // PPA path: postprocessor scale=1:1 (640→640), results in 640x640 space
+        if (m_result_mutex) xSemaphoreTake(m_result_mutex, portMAX_DELAY);
+        m_results = m_postprocessor->get_result(640, 640);
+        if (m_result_mutex) xSemaphoreGive(m_result_mutex);
+        // Scale up from 640x640 to original camera resolution
+        float sx = (float)frame->width / 640.0f;
+        float sy = (float)frame->height / 640.0f;
+        for (auto &res : m_results) {
+            for (int i = 0; i < 4; i++)
+                res.box[i] = (int)(res.box[i] * sx + 0.5f);
+            for (size_t i = 0; i < res.keypoint.size(); i += 2) {
+                res.keypoint[i]     = (int)(res.keypoint[i]     * sx + 0.5f);
+                res.keypoint[i + 1] = (int)(res.keypoint[i + 1] * sy + 0.5f);
+            }
+        }
+    } else {
+        // Software path: postprocessor already mapped to original dimensions
+        if (m_result_mutex) xSemaphoreTake(m_result_mutex, portMAX_DELAY);
+        m_results = m_postprocessor->get_result(frame->width, frame->height);
+        if (m_result_mutex) xSemaphoreGive(m_result_mutex);
+    }
 
-    // Clear for next frame
     m_postprocessor->clear_result();
 
     return ESP_OK;
@@ -261,17 +370,17 @@ void YoloService::inference_task_func(void *arg)
             continue;
         }
 
-        // Get the latest camera frame (RGB888)
-        const uint8_t *rgb888 = camera_get_frame_rgb888();
-        if (!rgb888) {
+        // Get the latest camera frame (RGB565 from V4L2)
+        const camera_frame_t *frame = camera_get_frame();
+        if (!frame || !frame->fb) {
             continue;
         }
 
         ESP_LOGI(TAG, "Inference start...");
         uint64_t t0 = esp_timer_get_time();
 
-        // Run inference (blocking, but in our task)
-        esp_err_t e = self->detect(const_cast<uint8_t *>(rgb888), 800, 800);
+        // Run inference with PPA hardware resize (blocking, in our task)
+        esp_err_t e = self->detect(frame);
 
         uint64_t t1 = esp_timer_get_time();
 

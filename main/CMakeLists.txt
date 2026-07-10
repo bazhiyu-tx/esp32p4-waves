@@ -26,7 +26,7 @@ idf_component_register(
          demo/demo_wifi.c
     INCLUDE_DIRS . core services luf luf/core luf/port demo
     PRIV_REQUIRES sdmmc esp_driver_sdmmc esp_wifi nvs_flash spiffs fatfs
-               esp_video esp-dl)
+               esp_video esp-dl esp_driver_ppa)
 
 idf_component_get_property(LVGL_LIB lvgl__lvgl COMPONENT_LIB)
 target_compile_options(

@@ -6,10 +6,14 @@
 #include "dl_model_base.hpp"
 #include "dl_image_preprocessor.hpp"
 #include "dl_pose_yolo11_postprocessor.hpp"
-
+#include "dl_image_ppa.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+
+#include "driver/ppa.h"
+
+#include "camera.h"
 
 class YoloService : public Service {
 public:
@@ -25,8 +29,8 @@ public:
     /// Non-blocking trigger: signal the inference task to run on the latest frame
     void trigger();
 
-    /// Run detection on an RGB888 image buffer (blocking, from inference task)
-    esp_err_t detect(uint8_t *rgb888_data, int width, int height);
+    /// Run detection on a camera frame (blocking, from inference task)
+    esp_err_t detect(const camera_frame_t *frame);
 
     /// Get the latest detection results (thread-safe snapshot)
     std::list<dl::detect::result_t> get_results_snapshot() const;
@@ -45,6 +49,11 @@ private:
     dl::Model *m_model;
     dl::image::ImagePreprocessor *m_preprocessor;
     dl::detect::yolo11posePostProcessor *m_postprocessor;
+
+    // PPA hardware-accelerated resize
+    ppa_client_handle_t m_ppa_handle;
+    void *m_ppa_outbuf;              // PPA output buffer (640x640 RGB888)
+    dl::image::img_t m_ppa_dst_img;  // descriptor for PPA output
 
     std::list<dl::detect::result_t> m_results;
 
