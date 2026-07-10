@@ -1,0 +1,15 @@
+## IDF Component Manager Manifest File
+dependencies:
+  lvgl/lvgl:
+    version: "^9.2.0"
+    public: true
+  waveshare/esp32_p4_wifi6_touch_lcd_7b:
+    version: "*"
+  espressif/esp_hosted:
+    version: "^2.12.9"
+  espressif/esp_wifi_remote:
+    version: "^1.6.1"
+  espressif/esp_video:
+    version: "^2.3.0"
+  espressif/esp-dl:
+    version: "^3.0.0"
