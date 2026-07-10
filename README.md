@@ -15,7 +15,7 @@
 | **显示** | 7" MIPI DSI 1024×600 (EK79007) | LVGL v9.5，PPA 硬件加速渲染 |
 | **摄像头** | OV5647 MIPI CSI | ISP 输出 RGB565 800×800 |
 | **WiFi** | ESP32-C6 (SDIO) | 通过 `esp_wifi_remote` + `esp_hosted` 驱动 |
-| **SD 卡** | SDMMC Slot 0 | 存储模型文件、字体、WiFi 配置 |
+| **SD 卡** | SDMMC Slot 0 | 存储模型文件 (`coco_pose_yolo11n_pose_s8_v1.espdl`)、字体、WiFi 配置 |
 
 ---
 
@@ -151,7 +151,7 @@ yolo11posePostProcessor (NMS + 关键点解码)
 | ❌ **CPU 400MHz** | 芯片批次限制，最高 360MHz |
 | ❌ **L2 Cache 512KB** | 启动崩溃（`reclaim_startup_stack_memory_for_heap`） |
 | ❌ **max_internal_size** | 内部 SRAM 最大连续块仅 31KB |
-| ❌ **P4 专用模型** | 不存在现成预训练版本 |
+| ✅ **P4 专用模型 v1** | 已切换到 `coco_pose_yolo11n_pose_s8_v1.espdl`（待测试） |
 
 ---
 
@@ -236,7 +236,7 @@ hello_world/
 │   │   ├── demo_wifi.c         # WiFi 设置 App
 │   │   └── ...
 │   └── models/
-│       └── coco_pose_yolo11n_pose_s8_v2.espdl  # 姿态模型
+│       └── coco_pose_yolo11n_pose_s8_v1.espdl  # P4 优化姿态模型
 ├── managed_components/         # IDF 组件管理器下载
 └── build/                      # 构建产物
 ```
@@ -298,7 +298,7 @@ idf.py monitor
 ```
 /sdcard/
 ├── models/
-│   └── coco_pose_yolo11n_pose_s8_v2.espdl
+│   └── coco_pose_yolo11n_pose_s8_v1.espdl  # P4 优化
 ├── fonts/         (可选：中文字体)
 └── wifi.conf      (可选：WiFi 配置)
 ```

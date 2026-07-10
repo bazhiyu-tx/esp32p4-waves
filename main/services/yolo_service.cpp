@@ -122,7 +122,7 @@ esp_err_t YoloService::load_model()
         return ESP_OK;
     }
 
-    const char *model_path = "/sdcard/models/coco_pose_yolo11n_pose_s8_p4_v2.espdl";
+    const char *model_path = "/sdcard/models/coco_pose_yolo11n_pose_s8_v1.espdl";
 
     // Check if SD is mounted and file exists
     FILE *f = fopen(model_path, "rb");
