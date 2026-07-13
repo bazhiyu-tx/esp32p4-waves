@@ -45,7 +45,6 @@ esp_err_t DisplayService::init() {
     bsp_display_lock(0);
     luf_osal_init();
     luf_init();
-    demo_init();
 
     /* 定期排空 luf_post 消息队列（每 10ms）——没有这个，时钟、通知不更新 */
     lv_timer_create([](lv_timer_t*) { luf_pump(); }, 10, NULL);

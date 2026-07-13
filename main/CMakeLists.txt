@@ -10,6 +10,8 @@ idf_component_register(
          services/wifi_service.cpp
          services/camera_service.cpp
          services/yolo_service.cpp
+         services/audio_mDNS_service.cpp
+         services/audio_c_api.cpp
          services/system/time_service.cpp
          luf/luf.c
          luf/core/luf_app.c
@@ -33,6 +35,16 @@ target_compile_options(
     ${LVGL_LIB} 
     PRIVATE 
         -DLV_LVGL_H_INCLUDE_SIMPLE
+)
+
+# LVGL's FatFS driver needs ff.h from ESP-IDF's fatfs component,
+# but the include path is not propagated correctly to managed components.
+# Add it explicitly here.
+idf_component_get_property(FATFS_DIR fatfs COMPONENT_DIR)
+target_include_directories(${LVGL_LIB} PRIVATE
+    ${FATFS_DIR}/src
+    ${FATFS_DIR}/diskio
+    ${FATFS_DIR}/vfs
 )
 
 # Enable C++17 for the main component

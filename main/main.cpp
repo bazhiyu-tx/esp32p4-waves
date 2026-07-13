@@ -20,8 +20,14 @@
 #include "services/camera_service.h"
 #include "services/system/time_service.h"
 #include "services/yolo_service.h"
+#include "services/audio_mDNS_service.h"
+#include "bsp/esp-bsp.h"
+#include "demo.h"
 
 static const char* TAG = "app";
+
+/* 全局音频服务指针（供 demo_apps.c 调用） */
+AudioMDnsService *g_audio_svc = nullptr;
 
 /* FreeRTOS hook stubs (required) */
 extern "C" {
@@ -49,7 +55,10 @@ extern "C" void app_main(void) {
     /* 5. Camera (OV5647, uses ISP) */
     mgr.create<CameraService>();
 
-    /* 6. YOLO11n-pose AI detection (loads model from SD) */
+    /* 6. Audio stream + mDNS (click icon to start) */
+    g_audio_svc = &mgr.create<AudioMDnsService>();
+
+    /* 7. YOLO11n-pose AI detection (loads model from SD) */
     mgr.create<YoloService>();
 
     /* Init all in order — services publish events on completion */
@@ -57,6 +66,11 @@ extern "C" void app_main(void) {
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Service init failed (0x%x), continuing", ret);
     }
+
+    /* 等 SD 卡挂载完再构建完整 UI 页面（此时图片文件可访问） */
+    bsp_display_lock(0);
+    demo_init();
+    bsp_display_unlock();
 
     /* Notify WiFi that SD may have config */
     wifi.set_sd_mounted(sd.is_mounted());

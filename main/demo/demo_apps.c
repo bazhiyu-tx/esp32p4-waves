@@ -15,6 +15,7 @@
 #include "luf_app_mgr.h"
 #include "luf_gesture.h"
 #include "services/yolo_c_api.h"
+#include "services/audio_c_api.h"
 
 /* COCO 17-keypoint skeleton connections (pairs of keypoint indices) */
 static const int SKELETON[][2] = {
@@ -529,6 +530,37 @@ static void build_camera(lv_obj_t *content)
     camera_timer = lv_timer_create(camera_refresh, 66, NULL);  /* 15 FPS — reduces cache sync overhead */
 }
 
+/************************** Audio Stream App **************************/
+
+static void audio_stream_icon(lv_obj_t *icon)
+{
+    /* 紫色圆形背景 */
+    lv_obj_set_style_radius(icon, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(icon, lv_color_hex(0x7B1FA2), 0);
+    lv_obj_set_style_bg_opa(icon, LV_OPA_COVER, 0);
+
+    /* 从 SD 卡加载图标图片 */
+    lv_obj_t *img = lv_image_create(icon);
+    lv_image_set_src(img, "S:/icons/audio_stream.jpg");
+    lv_obj_center(img);
+}
+
+static void build_audio_stream(lv_obj_t *content)
+{
+    /* 点击图标时启动音频服务 */
+    audio_start();
+
+    lv_obj_t *label = lv_label_create(content);
+    lv_label_set_text(label, LV_SYMBOL_VOLUME_MAX " Audio Stream\n\n"
+                       "Status: Listening on port 5000\n\n"
+                       "Send PCM audio from your PC\n"
+                       "to start playing."
+                       "\n\nVolume: " LV_SYMBOL_VOLUME_MID " 50%");
+    lv_obj_center(label);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(label, lv_obj_get_width(content) - 20);
+}
+
 void demo_apps(void)
 {
     /* 字段顺序：name, symbol, icon_build, color, build, fullscreen */
@@ -541,6 +573,7 @@ void demo_apps(void)
         {"Phone", LV_SYMBOL_CALL, NULL, 0x2196f3, build_phone, false},
         {"Messages", LV_SYMBOL_ENVELOPE, NULL, 0x00bcd4, build_messages, false},
         {"Camera", NULL, camera_icon, 0x555555, build_camera, true},
+        {"Audio Stream", NULL, audio_stream_icon, 0x7B1FA2, build_audio_stream, false},
     };
     for (unsigned i = 0; i < sizeof(apps) / sizeof(apps[0]); i++)
         luf_app_register(&apps[i]);
