@@ -17,6 +17,7 @@ import struct
 import sys
 import time
 import threading
+import queue
 import argparse
 
 try:
@@ -121,22 +122,35 @@ def main():
     else:
         loopback_dev = find_loopback_device()
 
-    # ── UDP Socket ──
+    # ── UDP Socket + 发送队列（解耦回调，防止 overflow）──
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    send_queue = queue.Queue(maxsize=128)
     seq = 0
     running = True
 
+    def send_worker():
+        """独立线程：从队列取数据并发送"""
+        while running:
+            try:
+                pkt = send_queue.get(timeout=0.1)
+                sock.sendto(pkt, (esp32_ip, ESP32_PORT))
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"❌ 发送失败: {e}")
+
+    threading.Thread(target=send_worker, daemon=True).start()
+
     def audio_callback(indata, frames, time_info, status):
-        """音频数据回调（sounddevice 自动调用）"""
+        """音频数据回调（快速入队，不阻塞）"""
         nonlocal seq
         if status:
             print(f"⚠️ {status}")
-        # 包装: [4字节序号] + [PCM数据]
         pkt = struct.pack('I', seq) + indata.tobytes()
         try:
-            sock.sendto(pkt, (esp32_ip, ESP32_PORT))
-        except Exception as e:
-            print(f"❌ 发送失败: {e}")
+            send_queue.put_nowait(pkt)
+        except queue.Full:
+            pass  # 队列满了直接丢弃，不影响回调
         seq += 1
 
     # ── 启动流 ──
