@@ -19,7 +19,7 @@ static const char *TAG = "JPEG_HW";
 /* 缓存最后一次解码的图像，用于 LVGL 引用 */
 static lv_image_dsc_t *s_cached_dsc = NULL;
 
-lv_image_dsc_t *jpeg_hw_load(const char *path)
+lv_image_dsc_t *jpeg_hw_load(const char *path, uint32_t chroma, uint8_t chroma_thresh)
 {
     /* ---- 1. 读取文件到内存 ---- */
     FILE *f = fopen(path, "rb");
@@ -103,6 +103,56 @@ lv_image_dsc_t *jpeg_hw_load(const char *path)
 
     free(jpeg_data);
 
+    /* ---- 2.5. Chroma key 去背（HSV 判断，比 RGB 距离更准） ---- */
+    uint8_t *rgba = NULL;
+    lv_color_format_t cf = LV_COLOR_FORMAT_RGB888;
+    int data_size = outbuf_len;
+    int pixel_count = w * h;
+
+    if (chroma != 0)
+    {
+        rgba = malloc(pixel_count*4);
+        if (!rgba) {
+            ESP_LOGE(TAG, "OOM for RGBA buffer (%d bytes)", pixel_count*4);
+            free(rgb);
+            return NULL;
+        }
+
+        for (int i = 0; i < pixel_count; i++)
+        {
+            uint8_t r = rgb[i*3 + 0];
+            uint8_t g = rgb[i*3 + 1];
+            uint8_t b = rgb[i*3 + 2];
+
+            // RGB → HSV，取饱和度和亮度
+            uint8_t max_c = r > g ? (r > b ? r : b) : (g > b ? g : b);
+            uint8_t min_c = r < g ? (r < b ? r : b) : (g < b ? g : b);
+            uint8_t sat = (max_c == 0) ? 0 : (uint8_t)((uint32_t)(max_c - min_c) * 255 / max_c);
+            uint8_t val = max_c;
+
+            // 软过渡：饱和度越高/亮度越低 → 越不可能是白色
+            uint8_t whiteness;
+            if (sat > 80 || val < 140) {
+                whiteness = 0;
+            } else {
+                int w = 255 - sat * 3;
+                if (val < 200) w = w * (val - 100) / 100;
+                whiteness = (uint8_t)(w > 255 ? 255 : (w < 0 ? 0 : w));
+            }
+
+            rgba[i*4 + 0] = b;
+            rgba[i*4 + 1] = g;
+            rgba[i*4 + 2] = r;
+            rgba[i*4 + 3] = 255 - whiteness;  // 越白越透明
+        }
+
+        free(rgb);
+        rgb = NULL;
+        cf = LV_COLOR_FORMAT_ARGB8888;
+        data_size = pixel_count * 4;
+    }
+
+
     /* ---- 3. 构造 LVGL 图像 ---- */
     if (s_cached_dsc) {
         /* 释放上一帧 */
@@ -121,9 +171,9 @@ lv_image_dsc_t *jpeg_hw_load(const char *path)
 
     dsc->header.w = w;
     dsc->header.h = h;
-    dsc->header.cf = LV_COLOR_FORMAT_RGB888;
-    dsc->data = rgb;
-    dsc->data_size = outbuf_len;
+    dsc->header.cf = cf;
+    dsc->data = (cf == LV_COLOR_FORMAT_ARGB8888) ? rgba : rgb;
+    dsc->data_size = data_size;
 
     s_cached_dsc = dsc;
     ESP_LOGI(TAG, "Decoded %s: %dx%d (%d bytes)", path, w, h, outbuf_len);

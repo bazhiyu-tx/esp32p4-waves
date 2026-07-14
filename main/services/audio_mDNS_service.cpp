@@ -26,38 +26,25 @@ void AudioMDnsService::udp_task_func(void *arg) {
     }
     ESP_LOGI(TAG, "UDP listening on port 5000");
 
-    // UDP 超时 800ms → 无数据时关闭 codec 消除底噪
-    struct timeval tv = { .tv_sec = 0, .tv_usec = 800000 };
+    // UDP 超时 50ms → 无数据时写零（静音）而非关闭 codec
+    struct timeval tv = { .tv_sec = 0, .tv_usec = 50000 };
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
-    esp_codec_dev_sample_info_t fs = {
-        .bits_per_sample = 16,
-        .channel = 1,
-        .channel_mask = 0,
-        .sample_rate = 44100,
-        .mclk_multiple = 0,
-    };
-
     static char buf[2048];
+    static const uint8_t silence[1024] = {0};  // 静音帧
     struct sockaddr_in client_addr;
     socklen_t addr_len = sizeof(client_addr);
-    bool codec_open = false;
 
     while(1){
         int len = recvfrom(sock, buf, sizeof(buf), 0, (struct sockaddr *)&client_addr, &addr_len);
         if (len < 0) {
-            // 超时无数据 → 关闭 codec 消除底噪
-            if (codec_open) {
-                esp_codec_dev_close(svc->m_spk_dev);
-                codec_open = false;
+            // 超时无数据 → 喂静音，保持 DAC 输出零电平
+            if (svc->m_spk_dev) {
+                esp_codec_dev_write(svc->m_spk_dev, (void *)silence, sizeof(silence));
             }
             continue;
         }
-        // 有数据到来 → 打开 codec
-        if (!codec_open && svc->m_spk_dev) {
-            esp_codec_dev_open(svc->m_spk_dev, &fs);
-            codec_open = true;
-        }
+        // 播放接收到的 PCM 数据
         if (svc->m_spk_dev) {
             esp_codec_dev_write(svc->m_spk_dev, buf, len);
         }
@@ -107,6 +94,16 @@ esp_err_t AudioMDnsService::start_audio()
     }
     set_volume(m_volume);
     ESP_LOGI(TAG, "Audio speaker ready");
+
+    // 打开 codec 并配置格式（持续保持打开，通过写零而非关闭来降噪）
+    esp_codec_dev_sample_info_t fs = {
+        .bits_per_sample = 16,
+        .channel = 1,
+        .channel_mask = 0,
+        .sample_rate = 44100,
+        .mclk_multiple = 0,
+    };
+    esp_codec_dev_open(m_spk_dev, &fs);
 
     // 订阅 WiFi 事件，连上后注册 mDNS
     m_wifi_evt = bus().on(EV_WIFI_CONNECTED, [this](void*) {

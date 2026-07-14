@@ -16,6 +16,7 @@
 #include "luf_gesture.h"
 #include "services/yolo_c_api.h"
 #include "services/audio_c_api.h"
+#include "services/jpeg_decoder.h"
 
 /* COCO 17-keypoint skeleton connections (pairs of keypoint indices) */
 static const int SKELETON[][2] = {
@@ -539,10 +540,13 @@ static void audio_stream_icon(lv_obj_t *icon)
     lv_obj_set_style_bg_color(icon, lv_color_hex(0x7B1FA2), 0);
     lv_obj_set_style_bg_opa(icon, LV_OPA_COVER, 0);
 
-    /* 从 SD 卡加载图标图片 */
-    lv_obj_t *img = lv_image_create(icon);
-    lv_image_set_src(img, "S:/icons/audio_stream.jpg");
-    lv_obj_center(img);
+    /* 硬件解码 JPEG 并显示（白色背景自动透明） */
+    lv_image_dsc_t *img_dsc = jpeg_hw_load("/sdcard/icons/audio_stream.jpg", 0xFFFFFF, 30);
+    if (img_dsc) {
+        lv_obj_t *img = lv_image_create(icon);
+        lv_image_set_src(img, img_dsc);
+        lv_obj_center(img);
+    }
 }
 
 static void build_audio_stream(lv_obj_t *content)

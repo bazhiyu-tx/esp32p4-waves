@@ -12,6 +12,7 @@ idf_component_register(
          services/yolo_service.cpp
          services/audio_mDNS_service.cpp
          services/audio_c_api.cpp
+         services/jpeg_decoder.c
          services/system/time_service.cpp
          luf/luf.c
          luf/core/luf_app.c

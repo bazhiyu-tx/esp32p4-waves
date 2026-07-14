@@ -15,12 +15,14 @@ extern "C" {
 /**
  * @brief 从 SD 卡加载 JPEG 文件，用硬件解码后创建 LVGL 图像
  * @param path  文件路径（VFS 路径，如 "/sdcard/icons/audio_stream.jpg"）
+ * @param chroma  色度值
+ * @param chroma_thresh  色度阈值
  * @return      lv_image_dsc_t 指针，失败返回 NULL
  *
  * @note 返回的 lv_image_dsc_t 由内部管理，不需要手动释放；
  *       重复调用 old 会被自动释放。
  */
-lv_image_dsc_t *jpeg_hw_load(const char *path);
+lv_image_dsc_t *jpeg_hw_load(const char *path,uint32_t chroma, uint8_t chroma_thresh);
 
 #ifdef __cplusplus
 }
