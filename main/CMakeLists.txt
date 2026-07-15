@@ -14,6 +14,7 @@ idf_component_register(
          services/audio_c_api.cpp
          services/jpeg_decoder.c
          services/system/time_service.cpp
+         services/system/OTA_service.cpp
          luf/luf.c
          luf/core/luf_app.c
          luf/core/luf_app_mgr.c
@@ -29,7 +30,7 @@ idf_component_register(
          demo/demo_wifi.c
     INCLUDE_DIRS . core services luf luf/core luf/port demo
     PRIV_REQUIRES sdmmc esp_driver_sdmmc esp_wifi nvs_flash spiffs fatfs
-               esp_video esp-dl esp_driver_ppa)
+               esp_video esp-dl esp_driver_ppa app_update esp_http_client esp_https_ota cjson esp-tls mbedtls esp_mm)
 
 idf_component_get_property(LVGL_LIB lvgl__lvgl COMPONENT_LIB)
 target_compile_options(

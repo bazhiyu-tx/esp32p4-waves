@@ -21,6 +21,7 @@
 #include "services/system/time_service.h"
 #include "services/yolo_service.h"
 #include "services/audio_mDNS_service.h"
+#include "services/system/OTA_service.h"
 #include "bsp/esp-bsp.h"
 #include "demo.h"
 
@@ -28,6 +29,7 @@ static const char* TAG = "app";
 
 /* 全局音频服务指针（供 demo_apps.c 调用） */
 AudioMDnsService *g_audio_svc = nullptr;
+OTAService *g_ota_svc = nullptr;
 
 /* FreeRTOS hook stubs (required) */
 extern "C" {
@@ -60,6 +62,8 @@ extern "C" void app_main(void) {
 
     /* 7. YOLO11n-pose AI detection (loads model from SD) */
     mgr.create<YoloService>();
+
+    g_ota_svc = &mgr.create<OTAService>();
 
     /* Init all in order — services publish events on completion */
     esp_err_t ret = mgr.start();

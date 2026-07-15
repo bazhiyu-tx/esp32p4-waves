@@ -14,3 +14,4 @@ dependencies:
   espressif/esp-dl:
     version: ^3.0.0
   espressif/mdns: '*'
+  espressif/cjson: '^1.7.19'

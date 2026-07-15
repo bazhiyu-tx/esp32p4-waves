@@ -159,6 +159,7 @@ static const struct setting_entry settings_items[] = {
     {"Wi-Fi", "Manage Wi-Fi networks and connection.", false},
     {"Display", "Brightness, timeout and theme options.", false},
     {"Sound", "Ringtone, media volume and vibration.", false},
+    {"System Update", "Check and install firmware updates.", false},
     {"About", "Device model, firmware and storage info.", true},
 };
 
@@ -197,6 +198,12 @@ static void setting_row_clicked(lv_event_t *e)
     if (strcmp(it->name, "Wi-Fi") == 0) {
         /* Build a real Wi-Fi scanner page */
         luf_app_mgr_push(demo_wifi_build, NULL, false);
+        return;
+    }
+
+    if (strcmp(it->name, "System Update") == 0) {
+        extern void ota_check_update(void);
+        ota_check_update();
         return;
     }
 

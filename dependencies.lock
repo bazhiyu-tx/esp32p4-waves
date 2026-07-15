@@ -1,4 +1,14 @@
 dependencies:
+  espressif/cjson:
+    component_hash: e788323270d90738662d66fffa910bfe1fba019bba087f01557e70c40485b469
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.7.19~2
   espressif/cmake_utilities:
     component_hash: 351350613ceafba240b761b4ea991e0f231ac7a9f59a9ee901f751bddc0bb18f
     dependencies:
@@ -408,6 +418,7 @@ dependencies:
     - esp32p4
     version: 2.0.0
 direct_dependencies:
+- espressif/cjson
 - espressif/esp-dl
 - espressif/esp_hosted
 - espressif/esp_video
@@ -415,6 +426,6 @@ direct_dependencies:
 - espressif/mdns
 - lvgl/lvgl
 - waveshare/esp32_p4_wifi6_touch_lcd_7b
-manifest_hash: 6036fcda65b702ff9b7a3403469a621dd07140074ea504d4f3cb9cffffa0ade8
+manifest_hash: 8f12ac25d9c978d771747d43e1d89608ce021a0453a6f6796f980f7e4cb1b233
 target: esp32p4
 version: 3.0.0
